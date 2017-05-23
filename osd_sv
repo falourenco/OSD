@@ -1,0 +1,745 @@
+#!/usr/bin/env python
+
+
+
+from __future__ import division
+import pygame
+from pygame.locals import *
+from std_msgs.msg import Int32
+from seagull_autopilot_msgs.msg import *
+import rospy
+import time
+import math
+import os
+import random
+import sys
+import threading
+import numpy as np
+import cv2
+import datetime
+from cv_bridge import CvBridge
+from sensor_msgs.msg import Image
+import sys
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.backends.backend_agg as agg
+
+
+
+img = pygame.image.load('/home/lourenco/jumpstart/sharpeye15_ws/src/seagull_autopilot/scripts/uav_img.png')
+
+#fpm = pygame.image.load('/home/lourenco/jumpstart/sharpeye15_ws/src/seagull_autopilot/scripts/fpm.png')
+
+#home_pt = pygame.image.load('/home/lourenco/jumpstart/sharpeye15_ws/src/seagull_autopilot/scripts/file.png').convert_alpha()
+
+vel_ind_icon = pygame.image.load('/home/lourenco/Downloads/vel_ind_new.png')
+
+trans = pygame.image.load('/home/lourenco/jumpstart/sharpeye15_ws/src/seagull_autopilot/scripts/Transparent.png')
+
+alt_ind_icon = pygame.image.load('/home/lourenco/Downloads/alt_ind_new.png')
+
+alt_meter = pygame.image.load('/home/lourenco/jumpstart/sharpeye15_ws/src/seagull_autopilot/scripts/alt_meter.png')
+
+hdg_ind = pygame.image.load('/home/lourenco/jumpstart/sharpeye15_ws/src/seagull_autopilot/scripts/hdg_ind.png')
+
+vvi_ind = pygame.image.load('/home/lourenco/jumpstart/sharpeye15_ws/src/seagull_autopilot/scripts/vvi_ind.png')
+
+box_wp = pygame.image.load('/home/lourenco/jumpstart/sharpeye15_ws/src/seagull_autopilot/scripts/box_wp.png')
+
+display_width = 640
+
+display_height = 480
+
+
+
+
+fw = (644/1150)*display_width
+fh = (480/644)*display_height
+
+####################### VEL AXIS ##############################
+
+fig1 = plt.figure(figsize=(fw/80, fh/80), dpi=80)
+
+ax1 = fig1.add_subplot(111)
+canvas1 = agg.FigureCanvasAgg(fig1)
+
+ax1.set_ylim([11.15,11.25])
+fig1.patch.set_visible(False)
+ax1.axes.patch.set_visible(False)  
+ax1.spines['right'].set_visible(False)
+ax1.spines['top'].set_visible(False)
+ax1.spines['bottom'].set_visible(False)
+ax1.spines['left'].set_color('#00FF00')
+ax1.spines['left'].set_linewidth(2.0)
+ax1.tick_params(axis='y', colors='#00FF00', labelsize=15, width=2)
+	
+	
+ax1.axes.get_xaxis().set_visible(False)
+ax1.yaxis.set_ticks_position('left')
+	
+ax1.axes.get_xaxis().set_visible(False)
+ax1.yaxis.set_ticks_position('left')  
+###############################################################
+
+
+########### ALT AXIS ##########################################
+fig2 = plt.figure(figsize=(fw/80, fh/80), dpi=80)
+ax2 = fig2.add_subplot(111)
+canvas2 = agg.FigureCanvasAgg(fig2)
+
+
+fig2.patch.set_visible(False)
+ax2.axes.patch.set_visible(False)
+ax2.set_ylim([60,65])
+ax2.spines['left'].set_visible(False)
+ax2.spines['top'].set_visible(False)
+ax2.spines['bottom'].set_visible(False)
+ax2.spines['right'].set_color('#00FF00')
+ax2.spines['right'].set_linewidth(2.0)
+ax2.tick_params(axis='y', colors='#00FF00', labelsize=15, width=2)
+	
+ax2.axes.get_xaxis().set_visible(False)
+ax2.yaxis.set_ticks_position('right')
+
+
+################################################################
+
+
+############## HEADING AXIS ####################################
+
+fig3 = plt.figure(figsize=(fw/80, fh/80), dpi=80)
+ax3 = fig3.add_subplot(111)
+canvas3 = agg.FigureCanvasAgg(fig3)
+
+fig3.patch.set_visible(False)
+ax3.axes.patch.set_visible(False)
+ax3.set_xlim(250,310)
+ax3.spines['right'].set_visible(False)
+ax3.spines['bottom'].set_visible(False)
+ax3.spines['left'].set_visible(False)
+ax3.spines['top'].set_color('#00FF00')
+ax3.spines['top'].set_linewidth(2.0)
+ax3.tick_params(axis='x', colors='#00FF00', labelsize=15, width=2)
+
+
+	
+ax3.axes.get_yaxis().set_visible(False)
+ax3.xaxis.set_ticks_position('top')
+
+
+########### VVI INDICATOR ######################################
+
+fig4 = plt.figure(figsize=(fw/80, fh/80), dpi=80)
+ax4 = fig4.add_subplot(111)
+canvas4 = agg.FigureCanvasAgg(fig4)
+
+ax4.set_ylim([-5,5])
+fig4.patch.set_visible(False)
+ax4.axes.patch.set_visible(False)  
+ax4.spines['right'].set_visible(False)
+ax4.spines['top'].set_visible(False)
+ax4.spines['bottom'].set_visible(False)
+ax4.spines['left'].set_color('#00FF00')
+ax4.spines['left'].set_linewidth(2.0)
+ax4.tick_params(axis='y', colors='#00FF00', labelsize=15, width=2)
+	
+	
+ax4.axes.get_xaxis().set_visible(False)
+ax4.yaxis.set_ticks_position('left')
+	
+ax4.axes.get_xaxis().set_visible(False)
+ax4.yaxis.set_ticks_position('left')
+
+###############################################################
+
+class video(object):
+
+    def __init__(self):
+        #event that will block until the info is received
+        self._event = threading.Event()
+        #attribute for storing the rx'd message
+        self._video = None
+
+
+    def __call__(self, msg):
+        #Uses __call__ so the object itself acts as the callback
+        #save the data, trigger the event
+        self._video = msg
+	self._event.set()
+
+    def get_video(self, timeout=None):
+        """Blocks until the data is rx'd with optional timeout
+        Returns the received message
+        """
+        self._event.wait(timeout)
+        return self._video
+
+
+
+class info(object):
+    def __init__(self):
+        #event that will block until the info is received
+        self._event = threading.Event()
+        #attribute for storing the rx'd message
+        self._vel = None
+	self._alt = None
+	self._lat = None
+	self._log = None
+	self._time = None
+	self._head = None
+	self._vvi = None
+	self._leftRPM = None
+	self._timestamp = None
+	self._tstamp = None
+
+    def __call__(self, msg):
+        #Uses __call__ so the object itself acts as the callback
+        #save the data, trigger the event
+        self._vel = msg.ias
+	self._alt = msg.altitude
+	self._lat = msg.latitude
+	self._log = msg.longitude
+	self._time = msg.timestamp
+	self._head = msg.compass
+	self._vvi = msg.vz
+	self._leftRPM = msg.leftRPM
+	self._timestamp = msg.timestamp
+	self._tstamp = msg.header.header.stamp
+	self._event.set()
+
+    def get_vel(self, timeout=None):
+        """Blocks until the data is rx'd with optional timeout
+        Returns the received message
+        """
+        self._event.wait(timeout)
+        return self._vel
+
+    def get_alt(self, timeout=None):
+        """Blocks until the data is rx'd with optional timeout
+        Returns the received message
+        """
+        self._event.wait(timeout)
+        return self._alt
+
+    def get_lat(self, timeout=None):
+        """Blocks until the data is rx'd with optional timeout
+        Returns the received message
+        """
+        self._event.wait(timeout)
+        return self._lat
+
+    def get_log(self, timeout=None):
+        """Blocks until the data is rx'd with optional timeout
+        Returns the received message
+        """
+        self._event.wait(timeout)
+        return self._log
+
+    def get_time(self, timeout=None):
+        """Blocks until the data is rx'd with optional timeout
+        Returns the received message
+        """
+        self._event.wait(timeout)
+        return self._time
+   
+    def get_head(self, timeout=None):
+        """Blocks until the data is rx'd with optional timeout
+        Returns the received message
+        """
+        self._event.wait(timeout)
+        return self._head
+   
+    def get_vvi(self, timeout=None):
+	"""Blocks until the data is rx'd with optional timeout
+	Returns the received message
+	"""
+	self._event.wait(timeout)
+	return self._vvi
+
+    def get_leftrpm(self, timeout=None):
+        """Blocks until the data is rx'd with optional timeout
+        Returns the received message
+        """
+        self._event.wait(timeout)
+        return self._leftRPM
+
+    def get_tstamp(self, timeout=None):
+        """Blocks until the data is rx'd with optional timeout
+        Returns the received message
+        """
+        self._event.wait(timeout)
+        return self._timestamp
+
+    def get_tp(self, timeout=None):
+        """Blocks until the data is rx'd with optional timeout
+        Returns the received message
+        """
+        self._event.wait(timeout)
+        return self._tstamp
+
+pygame.init()
+
+display_width = 640
+display_height = 480
+
+white = (255,255,255)
+black = (0,0,0)
+green = (0,255,0)
+
+
+
+gameDisplay = pygame.display.set_mode((display_width,display_height), RESIZABLE, 32)
+pygame.display.set_caption('On Screen Display')
+clock = pygame.time.Clock()
+
+rospy.init_node('info_receiver', anonymous=True)
+
+tel_callback = info()
+
+vid_callback = video()
+
+rospy.Subscriber('autopilot_telemetry', AutopilotTelemetry, tel_callback)
+
+rospy.Subscriber('video_msg', Image, vid_callback)
+
+
+
+def vel_ax():
+	
+	
+	x = round(tel_callback.get_vel(),2)
+	ax1.set_ylim([x-0.3,x+0.3])
+	
+	if x < 11.17:
+		ax1.spines['left'].set_color('#FF0000')
+		ax1.spines['left'].set_linewidth(2.5)
+		ax1.tick_params(axis='y', colors='#FF0000', labelsize=15, width=2.5)
+	else:
+		
+		ax1.spines['left'].set_color('#00FF00')
+		ax1.spines['left'].set_linewidth(2.0)
+		ax1.tick_params(axis='y', colors='#00FF00', labelsize=15, width=2)
+	canvas1.draw()
+	renderer_1 = canvas1.get_renderer()
+	raw_data_1 = renderer_1.tostring_argb()
+	
+	size_1 = canvas1.get_width_height()
+	return pygame.image.fromstring(raw_data_1, size_1, "ARGB")
+	
+	
+image = vel_ax().convert_alpha()	
+
+
+def alt_ax():
+
+	
+	
+	x = round(tel_callback.get_alt(),1)
+	
+	ax2.set_ylim([x-0.5,x+0.5])
+	if x < 64.4:
+		ax2.spines['right'].set_color('#FF0000')
+		ax2.spines['right'].set_linewidth(2.5)
+		ax2.tick_params(axis='y', colors='#FF0000', labelsize=15, width=2.5)
+	else:
+		
+		ax2.spines['right'].set_color('#00FF00')
+		ax2.spines['right'].set_linewidth(2.0)
+		ax2.tick_params(axis='y', colors='#00FF00', labelsize=15, width=2)
+	
+	
+	canvas2.draw()
+	renderer_2 = canvas2.get_renderer()
+	raw_data_2 = renderer_2.tostring_argb()
+	size_2 = canvas2.get_width_height()
+	return pygame.image.fromstring(raw_data_2, size_2, "ARGB")
+	
+
+image_2 = alt_ax().convert_alpha()
+
+def hdg_ax():
+
+
+	x = tel_callback.get_head()
+		  
+	ax3.set_ylim([x-20,x+20])
+	
+	canvas3.draw()
+	renderer_3 = canvas3.get_renderer()
+	raw_data_3 = renderer_3.tostring_argb()
+	size_3 = canvas3.get_width_height()
+	return pygame.image.fromstring(raw_data_3, size_3, "ARGB")
+
+	
+image_3= hdg_ax().convert_alpha()
+
+def vvi_ax():
+
+
+	x = round(tel_callback.get_vvi(),3)
+		  
+	ax4.set_ylim([x-1,x+1])
+	
+	canvas4.draw()
+	renderer_4 = canvas4.get_renderer()
+	raw_data_4 = renderer_4.tostring_argb()
+	size_4 = canvas4.get_width_height()
+	
+	
+	return pygame.image.fromstring(raw_data_4, size_4, "ARGB")
+	return x
+
+
+image_4 = vvi_ax().convert_alpha()	
+
+x = 540
+y = 322
+a = 49
+b = 318
+c = 1015
+d = 324
+e = 155
+f = 207
+g = 1028
+h = 177
+i = 277
+j = 570
+
+font = pygame.font.Font('/home/lourenco/Downloads/osd_type.ttf',19)
+#font_3 = pygame.font.Font('/home/lourenco/Downloads/gill_sans_MT.ttf',90)
+font_2 = pygame.font.Font('/home/lourenco/Downloads/osd_type.ttf',15)
+
+
+time_dec = (tel_callback.get_time())/1000
+conv_hour = datetime.datetime.fromtimestamp(time_dec).strftime('%H:%M:%S')
+
+home_pt = pygame.image.load('/home/lourenco/jumpstart/sharpeye15_ws/src/seagull_autopilot/scripts/file.png').convert_alpha()
+#HOME COORDINATES
+lath = 37.642464
+lonh = 122.417274
+##################################### CHECK VALUES################################################
+old_vel = round(tel_callback.get_vel(),1)
+old_alt = round(tel_callback.get_alt(),1)
+old_hdg = tel_callback.get_head()
+old_vvi = round(tel_callback.get_vvi(),3)
+
+
+def movie():
+	
+	new_lat = tel_callback.get_lat()
+	new_lon = abs(tel_callback.get_log())
+	#print tel_callback.get_tp()
+	
+	if new_lat>lath and lonh>new_lon:############### QUADRANTE II  ###########################
+		c_lan = new_lat-lath
+		c_lon = lonh-new_lon
+		dist2 = ((c_lan)*(c_lan))+((c_lon)*(c_lon))
+		dist = math.sqrt(dist2)
+		dist_meters = dist*100000
+		angulo_rad = math.atan(c_lan/c_lon)
+		angulo_deg = math.degrees(angulo_rad)
+		a_blit = 90 + angulo_deg
+		
+	elif new_lat<lath and lonh>new_lon:############### QUADRANTE IV  ###########################
+		c_lan = lath-new_lat
+		c_lon = lonh-new_lon
+		dist2 = ((c_lan)*(c_lan))+((c_lon)*(c_lon))
+		dist = math.sqrt(dist2)
+		dist_meters = dist*100000
+		angulo_rad = math.acos(((c_lan)*100000)/dist_meters)
+		angulo_deg = math.degrees(angulo_rad)
+		a_blit = angulo_deg
+		
+	elif new_lat>lath and lonh<new_lon:############### QUADRANTE I  ###########################
+		c_lan = new_lat-lath
+		c_lon = new_lon-lonh
+		dist2 = ((c_lan)*(c_lan))+((c_lon)*(c_lon))
+		dist = math.sqrt(dist2)
+		dist_meters = dist*100000
+		angulo_rad = math.acos(((c_lan)*100000)/dist_meters)
+		angulo_deg = math.degrees(angulo_rad)
+		a_blit = 180 + angulo_deg
+		
+	elif new_lat<lath and lonh<new_lon:############### QUADRANTE III  ###########################
+		c_lan = lath-new_lat
+		c_lon = new_lon-lonh
+		dist2 = ((c_lan)*(c_lan))+((c_lon)*(c_lon))
+		dist = math.sqrt(dist2)
+		dist_meters = dist*100000
+		angulo_rad = math.acos(((c_lon)*100000)/dist_meters)
+		angulo_deg = math.degrees(angulo_rad)
+		a_blit = 270 + angulo_deg
+		
+	
+
+	#################### LATITUDE FORMAT########################
+   
+	lat_dec = tel_callback.get_lat()
+	#print lat_dec
+	deg = "%5d"%(lat_dec)
+	mins_dec = lat_dec-float(deg)
+	mins = (mins_dec)*60
+	mins_real = "%5d"%(mins)
+	segs_dec = mins-float(mins_real)
+	segs = (segs_dec)*60
+	segs_real = " %02d"%(segs)
+	if(deg>0):
+		hemisphere = " N"
+	elif(deg<0):
+		hemisphere = " S"
+	lat_format = (deg+mins_real+segs_real+hemisphere)
+	#################### LONGITUDE FORMAT########################
+
+	head = tel_callback.get_log()
+	#print head
+	lon_dec = abs(head)
+	deg_lon = "%5d"%(lon_dec)
+	mins_dec_lon = lon_dec-float(deg_lon)
+	mins_lon = (mins_dec_lon)*60
+	mins_real_lon = "%5d"%(mins_lon)
+	segs_dec_lon = mins_lon-float(mins_real_lon)
+	segs_lon = (segs_dec_lon)*60
+	segs_real_lon = " %02d"%(segs_lon)
+
+	if(head>0):
+		hemisphere_lon = " E"
+	elif(head<0):
+		hemisphere_lon = " W"
+	lon_format = (deg_lon+mins_real_lon+segs_real_lon+hemisphere_lon)
+
+
+	#################### TIME FORMAT#############################
+
+	time_dec = (tel_callback.get_time())/1000
+	conv_hour = datetime.datetime.fromtimestamp(time_dec).strftime('%H:%M:%S')
+
+
+	############  HEADING FORMAT  ######################################
+
+	hdg = tel_callback.get_head()
+	voltas = (hdg/360)
+	voltas_int = "%5d"%(voltas)
+	dif = (float(voltas))-(float(voltas_int))
+	true_hdg = "%5d"%(dif*360)
+
+
+	#######################################################################
+	
+	
+	vel ="%8.2f"%(tel_callback.get_vel())
+	
+    	vel_text = font.render(vel, True, green)
+	alt_text = font.render("%8.1f"%(tel_callback.get_alt()), True, green)
+	lat_text = font.render(lat_format, True, green)
+        lon_text = font.render(lon_format, True, green)
+	hdg_text = font.render(true_hdg, True, green)
+	hour_text = font.render(conv_hour, True, green)
+	data_link = font.render("DATA :", True, green)
+	rssi = font.render("RSSI :", True, green)
+	rpm = font.render("RPM :"+"%5.1f"%(tel_callback.get_leftrpm()), True, green)
+	distway = font.render("DISTWP : "+"%5.1f"%(dist_meters)+"m", True, green)
+	ias_text = font_2.render("IAS [KT]", True, green)
+	vvi_text = font_2.render("VVI [FT/S]", True, green)
+	alti_text = font_2.render("ALT [FT]", True, green)
+	wypt_text = font.render("101", True, green)
+	#hora_teste = font_3.render(str(pygame.time.get_ticks()), True, black)
+	v =vid_callback.get_video()
+
+	video = CvBridge().imgmsg_to_cv2(v, "rgb8")
+	muda_eixo = np.swapaxes(video,0,1)
+	#print muda_eixo.shape
+	
+	#num = str(pygame.time.get_ticks())
+	#s = str(num[0])+" "+str(num[1])+" "+str(num[2])
+	
+	#hora_teste = font_3.render(s, True, black)
+	
+	fazer = pygame.surfarray.blit_array(gameDisplay, muda_eixo)
+	
+	rotate = gameDisplay
+	#rotate.fill(black)
+	rotate.blit(vel_text,(((9/1150)*display_width),(display_height/2)+4))
+        rotate.blit(alt_text,(((1057/1150)*display_width),(display_height/2)+11))
+        rotate.blit(lat_text,(((1000/1150)*display_width),((595/644)*display_height)))
+        rotate.blit(lon_text,(((1000/1150)*display_width),((610/644)*display_height)))
+        rotate.blit(hdg_text,((display_width/2)-30,10))
+        rotate.blit(hour_text,((10/display_width)*display_width,(10/display_height)*display_height))
+	rotate.blit(data_link,(((10/1150)*display_width),((595/644)*display_height)))
+	rotate.blit(rssi,(((10/1150)*display_width),((610/644)*display_height)))
+	rotate.blit(rpm,(((350/1150)*display_width),((610/644)*display_height)))
+	rotate.blit(distway,(((750/1150)*display_width),((610/644)*display_height)))
+	rotate.blit(ias_text,(((90/1150)*display_width)-31,((113/644)*display_height)))
+	rotate.blit(vvi_text,(((179/1150)*display_width)-22,((113/644)*display_height)))
+	rotate.blit(alti_text,(((997/1150)*display_width)+30,((113/644)*display_height)))
+	rotate.blit(wypt_text,(((159/1150)*display_width),((47/644)*display_height)))
+	#rotate.blit(hora_teste,(((display_width)/2)-120,(display_height/2)))
+	
+	rotate.blit(vel_ind_icon,(((9/1150)*display_width),((318/644)*display_height)))
+	rotate.blit(alt_ind_icon,(((1045/1150)*display_width),((324/644)*display_height)))
+	rotate.blit(vvi_ind,(((226/1150)*display_width)-50,((331/644)*display_height)))
+	rotate.blit(box_wp,(((151/1150)*display_width),((46/644)*display_height)))
+
+	rotate.blit(image,(((40/1150)*display_width)-50, ((100/644)*display_height)))
+	rotate.blit(image_2,(((453/1150)*display_width), ((100/644)*display_height)))
+	rotate.blit(image_3,(((248/1150)*display_width)-3, ((20/644)*display_height)-50))
+	rotate.blit(image_4,(((140/1150)*display_width)-50, ((100/644)*display_height)))
+
+	
+
+	rot = pygame.transform.rotate(home_pt,a_blit)
+		
+		
+	rotate.blit(rot,(((790/1150)*display_width),((177/644)*display_height)))
+	
+	
+	pygame.display.update()
+
+	pygame.display.set_caption("FPS: "+ str(clock.get_fps()))
+	clock.tick(30)
+	
+	
+while True:
+	new_vel = round(tel_callback.get_vel(),1)
+	new_alt = round(tel_callback.get_alt(),1)
+	new_hdg = tel_callback.get_head()
+	new_vvi = round(tel_callback.get_vvi(),3)
+	
+	if new_vel != old_vel:
+		
+		image = vel_ax().convert_alpha()
+		old_vel = new_vel
+		
+
+	if new_alt != old_alt:
+		
+		image_2 = alt_ax().convert_alpha()
+		old_alt = new_alt
+		
+
+	if new_hdg != old_hdg:
+	
+		image_3 = hdg_ax().convert_alpha()
+		old_hdg = new_hdg
+		
+	if new_vvi != old_vvi:
+		
+		image_4 = vvi_ax().convert_alpha()
+		old_vvi = new_vvi
+		
+
+
+	for event in pygame.event.get():
+		if event.type == QUIT:
+		    pygame.quit()
+		    sys.exit()
+		if event.type == KEYDOWN:
+	    		if event.key == K_ESCAPE:
+				pygame.quit()
+				sys.exit()
+		if event.type == VIDEORESIZE:
+			display_width = event.w
+			display_height = event.h
+			fw = (644/1150)*display_width
+			fh = (480/644)*display_height
+			gameDisplay = pygame.display.set_mode((display_width,display_height), RESIZABLE, 32)
+			
+			fig1 = plt.figure(figsize=(fw/80, fh/80), dpi=80)
+			ax1 = fig1.add_subplot(111)
+			canvas1 = agg.FigureCanvasAgg(fig1)
+
+			ax1.set_ylim([11.15,11.25])
+			ax1.set_xlim([0,5])
+			fig1.patch.set_visible(False)
+			ax1.axes.patch.set_visible(False)  
+			ax1.spines['right'].set_visible(False)
+			ax1.spines['top'].set_visible(False)
+			ax1.spines['bottom'].set_visible(False)
+			ax1.spines['left'].set_color('#00FF00')
+			ax1.spines['left'].set_linewidth(2.0)
+			ax1.tick_params(axis='y', colors='#00FF00', labelsize=15, width=2)
+	
+	
+			ax1.axes.get_xaxis().set_visible(False)
+			ax1.yaxis.set_ticks_position('left')
+	
+			ax1.axes.get_xaxis().set_visible(False)
+			ax1.yaxis.set_ticks_position('left')  
+			###############################################################
+
+
+			########### ALT AXIS ##########################################
+			fig2 = plt.figure(figsize=(fw/80, fh/80), dpi=80)
+			ax2 = fig2.add_subplot(111)
+			canvas2 = agg.FigureCanvasAgg(fig2)
+
+
+			fig2.patch.set_visible(False)
+			ax2.axes.patch.set_visible(False)
+			ax2.set_ylim([60,65])
+			ax2.set_xlim([0,5])
+			ax2.spines['left'].set_visible(False)
+			ax2.spines['top'].set_visible(False)
+			ax2.spines['bottom'].set_visible(False)
+			ax2.spines['right'].set_color('#00FF00')
+			ax2.spines['right'].set_linewidth(2.0)
+			ax2.tick_params(axis='y', colors='#00FF00', labelsize=15, width=2)
+	
+			ax2.axes.get_xaxis().set_visible(False)
+			ax2.yaxis.set_ticks_position('right')
+
+
+			################################################################
+
+
+			############## HEADING AXIS ####################################
+
+			fig3 = plt.figure(figsize=(fw/80, fh/80), dpi=80)
+			ax3 = fig3.add_subplot(111)
+			canvas3 = agg.FigureCanvasAgg(fig3)
+
+			fig3.patch.set_visible(False)
+			ax3.axes.patch.set_visible(False)
+			ax3.set_xlim(250,310)
+			ax3.spines['right'].set_visible(False)
+			ax3.spines['bottom'].set_visible(False)
+			ax3.spines['left'].set_visible(False)
+			ax3.spines['top'].set_color('#00FF00')
+			ax3.spines['top'].set_linewidth(2.0)
+			ax3.tick_params(axis='x', colors='#00FF00', labelsize=15, width=2)
+
+
+	
+			ax3.axes.get_yaxis().set_visible(False)
+			ax3.xaxis.set_ticks_position('top')
+
+
+			########### VVI INDICATOR ######################################
+
+			fig4 = plt.figure(figsize=(fw/80, fh/80), dpi=80)
+			ax4 = fig4.add_subplot(111)
+			canvas4 = agg.FigureCanvasAgg(fig4)
+
+			ax4.set_ylim([-5,5])
+			ax4.set_xlim([0,5])
+			fig4.patch.set_visible(False)
+			ax4.axes.patch.set_visible(False)  
+			ax4.spines['right'].set_visible(False)
+			ax4.spines['top'].set_visible(False)
+			ax4.spines['bottom'].set_visible(False)
+			ax4.spines['left'].set_color('#00FF00')
+			ax4.spines['left'].set_linewidth(2.0)
+			ax4.tick_params(axis='y', colors='#00FF00', labelsize=15, width=2)
+	
+	
+			ax4.axes.get_xaxis().set_visible(False)
+			ax4.yaxis.set_ticks_position('left')
+	
+			ax4.axes.get_xaxis().set_visible(False)
+			ax4.yaxis.set_ticks_position('left')
+			
+			
+			movie()
+			
+	movie()
+	
